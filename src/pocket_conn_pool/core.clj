@@ -1,8 +1,10 @@
 (ns pocket-conn-pool.core
-  (:require [clojure.java.jdbc :as jdbc]))
+  (:require [clojure.java.jdbc :as jdbc]
+            [clojure.core.async :refer [thread]]))
+
 
 (def connection-uri "postgres://twl_dev:@localhost:5432/twl_dev")
-(def max-connections 3)
+(def max-connections 2)
 (def available (ref []))
 (def in-use (ref []))
 (def waiting (ref []))
@@ -35,31 +37,29 @@
        (alter in-use conj w-conn)
        (deliver w-conn @pconn)))
     (dosync
-      (alter in-use (partial remove #(= @pconn %)))
-      (alter available conj @pconn))))
+     (alter in-use (partial remove #(= @pconn %)))
+     (alter available conj @pconn))))
 
-(count @in-use)
-(count @available)
-(count @waiting)
-(def conn1 (get-connection))
-(def conn2 (get-connection))
-(def conn3 (get-connection))
-(def conn4 (get-connection))
-(def conn5 (get-connection))
-(def conn6 (get-connection))
-(def conn7 (get-connection))
-(def conn8 (get-connection))
-(def conn9 (get-connection))
-(def conn10 (get-connection))
-(def conn11 (get-connection))
-(close-connection conn1)
-(close-connection conn2)
-(close-connection conn3)
-(close-connection conn4)
-(close-connection conn5)
-(close-connection conn6)
-(close-connection conn7)
-(close-connection conn8)
-(close-connection conn9)
-(close-connection conn10)
-(close-connection conn11)
+(defn thread-1 []
+  (future
+    (let [conn1 (get-connection)
+          _conn2 (get-connection)]
+      (println "t1 => fetched conns")
+      (println "t1 => sleeping 20 secs")
+      (Thread/sleep 20000)
+      (println "t1 => closed conn1")
+      (close-connection conn1))))
+
+(defn thread-2 []
+  (future
+    (println "t2 => sleeping 10 secs")
+    (Thread/sleep 10000)
+    (let [conn3 (get-connection)]
+      (println "t2 => fetched conn")
+      (println (time @conn3))
+      (println "t2 => resolved conn"))))
+
+(defn t []
+  (do
+    (thread-1)
+    (thread-2)))
