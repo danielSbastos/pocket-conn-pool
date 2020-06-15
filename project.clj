@@ -5,6 +5,7 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [org.clojure/core.async "1.2.603"]
+                 [org.clojure/test.check "1.0.0"]
                  [org.clojure/java.jdbc "0.4.2"]
                  [postgresql/postgresql "8.4-702.jdbc4"]]
   :repl-options {:init-ns pocket-conn-pool.core})

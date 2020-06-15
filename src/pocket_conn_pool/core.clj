@@ -39,7 +39,6 @@
      (alter in-use (partial remove #(= @pconn %)))
      (alter available conj @pconn))))
 
-
 ;; ============== test ====================
 
 (defn thread-1 []
