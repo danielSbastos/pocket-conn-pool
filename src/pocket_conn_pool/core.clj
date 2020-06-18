@@ -3,12 +3,12 @@
             [clojure.core.async :refer [thread]]))
 
 (def connection-uri "postgres://twl_dev:@localhost:5432/twl_dev")
-(def max-connections 2)
+(def max-connections 3)
 (def available (ref []))
 (def in-use (ref []))
 (def waiting (ref []))
 
-(defn get-connection []
+(defn create-connection []
   (let [conn (promise)]
     (if (not-empty @available)
       (dosync
@@ -43,8 +43,8 @@
 
 (defn thread-1 []
   (future
-    (let [conn1 (get-connection)
-          conn2 (get-connection)]
+    (let [conn1 (create-connection)
+          conn2 (create-connection)]
       (println "t1 => fetched conns")
       (println "t1 => sleeping 20 secs")
       (Thread/sleep 20000)
@@ -58,7 +58,7 @@
   (future
     (println "t2 => sleeping 10 secs")
     (Thread/sleep 10000)
-    (let [conn3 (get-connection)]
+    (let [conn3 (create-connection)]
       (println "t2 => fetched conn")
       (println (time @conn3))
       (println "t2 => resolved conn"))))
@@ -67,7 +67,7 @@
   (future
     (println "t3 => sleeping 13 secs")
     (Thread/sleep 13000)
-    (let [conn4 (get-connection)]
+    (let [conn4 (create-connection)]
       (println "t3 => fetched conn")
       (println (time @conn4))
       (println "t3 => resolved conn"))))

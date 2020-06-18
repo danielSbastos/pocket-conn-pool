@@ -1,22 +1,33 @@
 (ns pocket-conn-pool.core-test
-  (:require [pocket-conn-pool.core :as core]
-            [clojure.test.check :as tc]
+  (:require [clojure.test :refer [is]]
+            [pocket-conn-pool.core :as core]
             [clojure.test.check.generators :as gen]
-            [clojure.test.check.properties :as prop #?@(:cljs [:include-macros true])]))
+            [stateful-check.core :refer [specification-correct?]]))
 
-(def gen-get
-  (gen/tuple (gen/return :get) (gen/choose 0 20)))
 
-(defn gen-close [key]
-  (gen/tuple (gen/return :close) (gen/return key)))
+(def create-conn-specification
+  {:command #'core/create-connection
+   :next-state (fn [state _ result] (conj state result))
+   :postcondition (fn [prev-state next-state _ result]
+                    (if (<= (count next-state) 10)
+                      (do
+                        (< (count prev-state) (count next-state))
+                        (= (true (realized? result))))
+                      true))})
 
-(def gen-ops
-  (gen/let [conn gen-get]
-    (gen/vector
-     (gen/one-of [gen-get (gen-close conn)]))))
+(def close-conn-specification
+  {:requires (fn [state] (seq state))
+   :args (fn [state] [(first state)])
+   :command #'core/close-connection
+   :next-state (fn [state _ _]
+                 (rest state))
+   :postcondition (fn [prev-state current-state _ result]
+                    (> (count prev-state) (count current-state)))})
 
-(defn conn-run [ops]
-  (doseq [[op val] ops]
-    (case op
-      :get "todo"
-      :close "todo")))
+(def conn-spec
+  {:commands {:create #'create-conn-specification
+              :close #'close-conn-specification}})
+
+(is (specification-correct? conn-spec
+                            {:gen {:threads 1}
+                             :run {:max-tries 2}}))
