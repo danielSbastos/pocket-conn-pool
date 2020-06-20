@@ -4,30 +4,26 @@
             [clojure.test.check.generators :as gen]
             [stateful-check.core :refer [specification-correct?]]))
 
-
 (def create-conn-specification
   {:command #'core/create-connection
-   :next-state (fn [state _ result] (conj state result))
+   :next-state (fn [state _ result]
+                 (when-not (= :timeout result)
+                   (conj state result)))
    :postcondition (fn [prev-state next-state _ result]
-                    (if (<= (count next-state) 10)
-                      (do
-                        (< (count prev-state) (count next-state))
-                        (= (true (realized? result))))
-                      true))})
+                    (let [conn-count (count next-state)]
+                      (<= conn-count 10)))})
 
 (def close-conn-specification
   {:requires (fn [state] (seq state))
-   :args (fn [state] [(first state)])
+   :args (fn [state] (do (println state) [(first state)]))
    :command #'core/close-connection
    :next-state (fn [state _ _]
-                 (rest state))
-   :postcondition (fn [prev-state current-state _ result]
-                    (> (count prev-state) (count current-state)))})
+                 (rest state))})
 
 (def conn-spec
   {:commands {:create #'create-conn-specification
               :close #'close-conn-specification}})
 
 (is (specification-correct? conn-spec
-                            {:gen {:threads 1}
+                            {:gen {:threads 2}
                              :run {:max-tries 2}}))
