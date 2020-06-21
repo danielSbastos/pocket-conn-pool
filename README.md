@@ -1,3 +1,3 @@
 # pocket-conn-pool
 
-Pocket lib for handling connection pooling in Clojure, for learning purposes
+Project of mine to learn property based testing in Clojure, in specific stateful and concurrent ones.
