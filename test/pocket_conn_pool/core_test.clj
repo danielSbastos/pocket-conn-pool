@@ -1,29 +1,53 @@
 (ns pocket-conn-pool.core-test
   (:require [clojure.test :refer [is]]
-            [pocket-conn-pool.core :as core]
             [clojure.test.check.generators :as gen]
-            [stateful-check.core :refer [specification-correct?]]))
+            [pocket-conn-pool.core :as core]))
 
-(def create-conn-specification
-  {:command #'core/create-connection
-   :next-state (fn [state _ result]
-                 (when-not (= :timeout result)
-                   (conj state result)))
-   :postcondition (fn [prev-state next-state _ result]
-                    (let [conn-count (count next-state)]
-                      (<= conn-count 10)))})
+(def gen-create
+  (gen/return :create))
 
-(def close-conn-specification
-  {:requires (fn [state] (seq state))
-   :args (fn [state] (do (println state) [(first state)]))
-   :command #'core/close-connection
-   :next-state (fn [state _ _]
-                 (rest state))})
+(def gen-close
+  (gen/return :close))
 
-(def conn-spec
-  {:commands {:create #'create-conn-specification
-              :close #'close-conn-specification}})
+(defn commands-per-thread [thread-count]
+  (let [gen-commands (concat [] (gen/sample
+                                 (gen/one-of [gen-create gen-close])
+                                 (* 20 thread-count)))]
+    (partition (/ (count gen-commands) thread-count) gen-commands)))
 
-(is (specification-correct? conn-spec
-                            {:gen {:threads 2}
-                             :run {:max-tries 2}}))
+(def timeouts-count (atom 0))
+(def state (atom []))
+
+(defn run-close []
+  (core/close-connection (first @state))
+  (swap! state next))
+
+(defn run-create []
+  (let [conn (core/create-connection)]
+    (case conn
+      :timeout (swap! timeouts-count inc)
+      (do
+        (is (and
+             (<= (count @state) core/max-connections)
+             (= (instance? org.postgresql.jdbc4.Jdbc4Connection conn))))
+        (swap! state conj conn)))))
+
+(defn run-future [latch commands]
+  (future (do
+            (deref latch)
+            (doseq [cmd commands]
+              (case cmd
+                :create (run-create)
+                :close (run-close))))))
+
+(defn run-futures [latch parallel-size]
+  (let [cmds-per-thread (commands-per-thread parallel-size)]
+    (let [futures (into [] (map #(run-future latch %) cmds-per-thread))]
+      (deliver latch :go!)
+      futures)))
+
+(core/enable-ref-watchers)
+(is (into [] (map #(deref %) (run-futures (promise) 3))))
+
+;; TODO: add explicit postcondition
+;; TODO: calculate total of timeouts
