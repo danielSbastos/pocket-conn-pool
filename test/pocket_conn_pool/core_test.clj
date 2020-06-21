@@ -15,22 +15,19 @@
                                  (* 20 thread-count)))]
     (partition (/ (count gen-commands) thread-count) gen-commands)))
 
-(def timeouts-count (atom 0))
 (def state (atom []))
 
 (defn run-close []
-  (core/close-connection (first @state))
-  (swap! state next))
+  (when-not (empty? @state)
+    (core/close-connection (first @state))
+    (swap! state next)))
 
 (defn run-create []
   (let [conn (core/create-connection)]
-    (case conn
-      :timeout (swap! timeouts-count inc)
-      (do
-        (is (and
-             (<= (count @state) core/max-connections)
-             (= (instance? org.postgresql.jdbc4.Jdbc4Connection conn))))
-        (swap! state conj conn)))))
+    (when-not (= :timeout conn)
+      (is (<= (count @state) core/max-connections))
+      (is (= (instance? org.postgresql.jdbc4.Jdbc4Connection conn)))
+      (swap! state conj conn))))
 
 (defn run-future [latch commands]
   (future (do
@@ -46,8 +43,16 @@
       (deliver latch :go!)
       futures)))
 
-(core/enable-ref-watchers)
-(is (into [] (map #(deref %) (run-futures (promise) 3))))
+(defn setup []
+  (doseq [conn (concat [] @core/in-use @core/available)]
+    (.close conn))
+  (dosync
+   (alter core/available (fn [_] []))
+   (alter core/in-use (fn [_] []))
+   (alter core/waiting (fn [_] []))))
 
-;; TODO: add explicit postcondition
-;; TODO: calculate total of timeouts
+(core/enable-ref-watchers)
+(dotimes [_ 1]
+  (setup)
+  (println "running commands")
+  (is (into [] (map #(deref %) (run-futures (promise) 2)))))

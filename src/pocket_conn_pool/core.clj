@@ -13,41 +13,47 @@
   (add-watch ref-ref :watcher
              (fn [key atom old-state new-state]
                (println "--------" ref-name "-----------")
-               (println "old-state" (count old-state))
-               (println "new-state" (count new-state)))))
+               (println (.getName (Thread/currentThread)))
+               (println "old-state count" (count old-state))
+               (println "new-state count" (count new-state)))))
 
 (defn enable-ref-watchers []
   (add-watcher available "available")
   (add-watcher in-use "in-use")
   (add-watcher waiting "waiting"))
 
+(defn jdbc-connection []
+  (jdbc/get-connection connection-uri))
+
 (defn create-connection []
   (let [conn (promise)]
     (dosync
      (if (not-empty @available)
-       (let [fetched-conn (first @available)]
-         (alter available (partial drop 1))
-         (alter in-use conj fetched-conn)
-         (deliver conn fetched-conn)
-         @conn)
+       (dosync
+        (let [fetched-conn (first @available)]
+          (alter available (partial drop 1))
+          (alter in-use conj fetched-conn)
+          (deliver conn fetched-conn))
+        @conn)
        (if (< (count @in-use) max-connections)
-         (let [fetched-conn (jdbc/get-connection connection-uri)]
-           (alter in-use conj fetched-conn)
-           (deliver conn fetched-conn)
-           @conn)
-         (do
+         (dosync
+          (let [fetched-conn (jdbc-connection)]
+            (alter in-use conj fetched-conn)
+            (deliver conn fetched-conn))
+          @conn)
+         (dosync
            (alter waiting conj conn)
            (deref conn 300 :timeout)))))))
 
 (defn close-connection [conn]
   (dosync
    (if (> (count @waiting) 0)
-     (do
-       (alter in-use (partial remove #(= conn %)))
+     (dosync
+      (alter in-use (partial remove #(= conn %)))
        (let [w-conn (first @waiting)]
          (alter waiting next)
-         (alter in-use conj w-conn)
-         (deliver w-conn conn)))
-     (do
+         (deliver w-conn conn)
+         (alter in-use conj @w-conn)))
+     (dosync
        (alter in-use (partial remove #(= conn %)))
        (alter available conj conn)))))
