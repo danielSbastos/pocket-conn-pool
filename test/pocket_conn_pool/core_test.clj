@@ -5,20 +5,22 @@
 (def state [])
 
 (def close-spec
-  {:precondition (fn [state] (some? state))
+  {:precondition (fn [state] (some? state)) ;; (do (println "close precondition " state) (some? state)))
    :command (fn [state] (core/close-connection (first state)))
    :postcondition (fn [_ _] (identity true))
    :next-state (fn [state result] (next state))})
 
 (def create-spec
-  {:precondition (fn [_] (identity true))
+  {:precondition (fn [state] (identity true))
    :command (fn [_] (core/create-connection))
    :postcondition (fn [_ result]
-                    (is (and (<= (count @core/in-use) core/max-connections)
-                             (or (= :timeout result)
-                                 (= true (instance? org.postgresql.jdbc4.Jdbc4Connection result))))))
+                    (is (<= (count @core/in-use) core/max-connections))
+                    (is (or (= :timeout result)
+                            (= true (instance? org.postgresql.jdbc4.Jdbc4Connection result)))))
    :next-state (fn [state result]
-                 (when (not= :timeout result) (conj state result)))})
+                 (if (not= :timeout result)
+                   (conj state result)
+                   state))})
 
 (defn execute-spec [spec]
   (fn [key & args]
@@ -32,12 +34,13 @@
 
 (defn gen-specs []
   (->> [create-spec close-spec]
-       (mapcat #(take (rand-int 100) (repeat %)))
+       (mapcat #(take (rand-int 50) (repeat %)))
        shuffle))
 
 (defn run-specs [specs]
   (reduce
    (fn [state spec]
+     ;; (println state)
      (run-spec (execute-spec spec) state))
    []
    specs)
@@ -49,22 +52,25 @@
             (run-specs specs))))
 
 (defn setup []
-  (doseq [conn (concat [] @core/in-use @core/available)]
-    (.close conn))
+  ;; (println @core/in-use)
+  ;; (println @core/available)
+  ;; (doseq [conn (concat [] @core/in-use @core/available)]
+    ;; (println conn))
+    ;; (.close conn))
   (dosync
-   (alter core/available (fn [_] []))
-   (alter core/in-use (fn [_] []))
-   (alter core/waiting (fn [_] []))))
+   (ref-set core/available [])
+   (ref-set core/in-use [])
+   (ref-set core/waiting [])))
 
 (defn execute-tests []
   (let [latch (promise)]
-    (setup)
-    (let [test-futures (->> (range 0 1)
+    (let [test-futures (->> (range 0 3)
                             (map (fn [_] (run-in-future latch (gen-specs))))
                             (into []))]
           (deliver latch :go!)
           (doseq [f test-futures]
-            (deref f)))))
+            (deref f)))
+    (setup)))
 
-(core/enable-ref-watchers)
+;; (core/enable-ref-watchers)
 (execute-tests)

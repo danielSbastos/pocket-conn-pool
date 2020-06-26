@@ -26,34 +26,40 @@
   (jdbc/get-connection connection-uri))
 
 (defn create-connection []
+  ;; (Thread/sleep 100)
   (let [conn (promise)]
     (dosync
+     ;; (ensure available)
+     ;; (ensure in-use)
+     ;; (ensure waiting)
      (if (not-empty @available)
-       (dosync
         (let [fetched-conn (first @available)]
           (alter available (partial drop 1))
           (alter in-use conj fetched-conn)
-          (deliver conn fetched-conn))
-        @conn)
+          (deliver conn fetched-conn)
+          @conn)
        (if (< (count @in-use) max-connections)
-         (dosync
           (let [fetched-conn (jdbc-connection)]
             (alter in-use conj fetched-conn)
-            (deliver conn fetched-conn))
-          @conn)
-         (dosync
+            (deliver conn fetched-conn)
+            @conn)
+         (do
            (alter waiting conj conn)
-           (deref conn 300 :timeout)))))))
+           (deref conn 800 :timeout)))))))
 
 (defn close-connection [conn]
+  ;; (Thread/sleep 100)
   (dosync
+   ;; (ensure available)
+   ;; (ensure waiting)
+   ;; (ensure in-use)
    (if (> (count @waiting) 0)
-     (dosync
+     (do
       (alter in-use (partial remove #(= conn %)))
        (let [w-conn (first @waiting)]
          (alter waiting next)
          (deliver w-conn conn)
          (alter in-use conj @w-conn)))
-     (dosync
+     (do
        (alter in-use (partial remove #(= conn %)))
        (alter available conj conn)))))
