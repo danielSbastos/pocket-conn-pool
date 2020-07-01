@@ -1,65 +1,40 @@
 (ns pocket-conn-pool.core
-  (:require [clojure.java.jdbc :as jdbc]
-            [clojure.core.async :refer [thread]]))
+  (:require [clojure.java.jdbc :as jdbc]))
 
 (def connection-uri "postgres://twl_dev:@localhost:5432/twl_dev")
-(def max-connections 8)
+(def max-connections 20)
+(def wait-conn-timeout 800)
 
 (def available (ref []))
 (def in-use (ref []))
 (def waiting (ref []))
 
-(defn add-watcher [ref-ref ref-name]
-  (add-watch ref-ref :watcher
-             (fn [key atom old-state new-state]
-               (println "--------" ref-name "-----------")
-               (println (.getName (Thread/currentThread)))
-               (println "old-state count" (count old-state))
-               (println "new-state count" (count new-state)))))
-
-(defn enable-ref-watchers []
-  (add-watcher available "available")
-  (add-watcher in-use "in-use")
-  (add-watcher waiting "waiting"))
-
-(defn jdbc-connection []
-  (jdbc/get-connection connection-uri))
-
 (defn create-connection []
-  ;; (Thread/sleep 100)
-  (let [conn (promise)]
-    (dosync
-     ;; (ensure available)
-     ;; (ensure in-use)
-     ;; (ensure waiting)
-     (if (not-empty @available)
+  ((let [conn (promise)]
+     (dosync
+      (if (not-empty @available)
         (let [fetched-conn (first @available)]
           (alter available (partial drop 1))
-          (alter in-use conj fetched-conn)
-          (deliver conn fetched-conn)
-          @conn)
-       (if (< (count @in-use) max-connections)
-          (let [fetched-conn (jdbc-connection)]
-            (alter in-use conj fetched-conn)
-            (deliver conn fetched-conn)
-            @conn)
-         (do
-           (alter waiting conj conn)
-           (deref conn 800 :timeout)))))))
+          (alter in-use conj conn)
+          #(deref (deliver conn @fetched-conn)))
+        (if (< (count @in-use) max-connections)
+          (do
+            (alter in-use conj conn)
+            #(deref (deliver conn (jdbc/get-connection connection-uri))))
+          (do
+            (alter waiting conj conn)
+            #(deref conn wait-conn-timeout :timeout))))))))
 
 (defn close-connection [conn]
-  ;; (Thread/sleep 100)
-  (dosync
-   ;; (ensure available)
-   ;; (ensure waiting)
-   ;; (ensure in-use)
-   (if (> (count @waiting) 0)
-     (do
-      (alter in-use (partial remove #(= conn %)))
-       (let [w-conn (first @waiting)]
-         (alter waiting next)
-         (deliver w-conn conn)
-         (alter in-use conj @w-conn)))
-     (do
-       (alter in-use (partial remove #(= conn %)))
-       (alter available conj conn)))))
+  (let [same-conn? #(= conn (deref %))]
+    (when (filter same-conn? conn)
+      ((dosync
+        (alter in-use (partial remove same-conn?))
+        (if (not-empty @waiting)
+          (let [w-conn (first @waiting)]
+            (alter waiting next)
+            (alter in-use conj w-conn)
+            #(deliver w-conn conn))
+          (let [p-conn (promise)]
+            (alter available conj p-conn)
+            #(deliver p-conn conn))))))))

@@ -2,10 +2,8 @@
   (:require [clojure.test :refer [is]]
             [pocket-conn-pool.core :as core]))
 
-(def state [])
-
 (def close-spec
-  {:precondition (fn [state] (some? state)) ;; (do (println "close precondition " state) (some? state)))
+  {:precondition (fn [state] (some? state))
    :command (fn [state] (core/close-connection (first state)))
    :postcondition (fn [_ _] (identity true))
    :next-state (fn [state result] (next state))})
@@ -40,9 +38,8 @@
 (defn run-specs [specs]
   (reduce
    (fn [state spec]
-     ;; (println state)
      (run-spec (execute-spec spec) state))
-   []
+   [] ;; initial state
    specs)
   true)
 
@@ -52,25 +49,20 @@
             (run-specs specs))))
 
 (defn setup []
-  ;; (println @core/in-use)
-  ;; (println @core/available)
-  ;; (doseq [conn (concat [] @core/in-use @core/available)]
-    ;; (println conn))
-    ;; (.close conn))
+  (doseq [pconn (concat [] @core/in-use @core/available)]
+    (when-let [conn @pconn] (.close conn)))
   (dosync
    (ref-set core/available [])
    (ref-set core/in-use [])
    (ref-set core/waiting [])))
 
 (defn execute-tests []
+  (setup)
   (let [latch (promise)]
-    (let [test-futures (->> (range 0 3)
+    (let [test-futures (->> (range 0 10)
                             (map (fn [_] (run-in-future latch (gen-specs))))
                             (into []))]
           (deliver latch :go!)
-          (doseq [f test-futures]
-            (deref f)))
-    (setup)))
+          (doseq [f test-futures] (deref f)))))
 
-;; (core/enable-ref-watchers)
 (execute-tests)
