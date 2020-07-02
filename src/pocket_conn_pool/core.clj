@@ -2,7 +2,7 @@
   (:require [clojure.java.jdbc :as jdbc]))
 
 (def connection-uri "postgres://twl_dev:@localhost:5432/twl_dev")
-(def max-connections 20)
+(def max-connections 10)
 (def wait-conn-timeout 800)
 
 (def available (ref []))
