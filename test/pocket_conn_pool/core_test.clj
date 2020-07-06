@@ -2,39 +2,56 @@
   (:require [clojure.test :refer [is]]
             [pocket-conn-pool.core :as core]
             [clojure.test.check.generators :as gen]
+            [clojure.java.jdbc :as jdbc]
             [stateful-check.core :refer [specification-correct?]]))
 
 (def create-conn-specification
-  {:command #'core/create-connection
+  {:args (fn [state] [(:db state)])
+   :command #'core/create-connection
    :next-state (fn [state _ result]
-                 (println state)
                  (if (= :timeout result)
                    state
-                   (conj state result)))
-   :postcondition (fn [prev-state next-state _ result]
-                    (let [conn-count (count next-state)]
-                      (<= conn-count core/max-connections)))})
+                   (update-in state [:conns] conj result)))
+   :postcondition (fn [state _ _ _]
+                    (let [pool @(-> state :db :pool)]
+                      (<= (count pool) core/max-connections)))})
 
 (def close-conn-specification
-  {:requires (fn [state] (seq state))
-   :args (fn [state] [(first state)])
+  {:requires (fn [state] (and (vector? (:conns state))
+                              (not (empty? (:conns state)))))
+   :args (fn [state] [(:db state) (first (:conns state))])
    :command #'core/close-connection
-   :next-state (fn [state _ _]
-                 (rest state))})
+   :next-state (fn [state _ _] (update-in state [:conns] next))})
 
-(defn setup []
-  (doseq [pconn (concat [] @core/in-use @core/available)]
-    (when-let [conn @pconn] (.close conn)))
+(def pool (atom []))
+(defn get-connection []
+  (let [conn (jdbc/get-connection core/connection-uri)]
+    (swap! pool conj conn)
+    conn))
+
+(defn cleanup []
+  (doseq [conn @pool]
+    (.close conn))
+  (reset! pool [])
   (dosync
    (ref-set core/available [])
    (ref-set core/in-use [])
    (ref-set core/waiting [])))
 
+(def initial-state
+  {:db {:connection get-connection
+        :pool pool}
+   :conns []})
+
 (def conn-spec
-  {:commands {:create #'create-conn-specification}
-   :setup setup})
+  {:commands {:create #'create-conn-specification
+              :close #'close-conn-specification}
+   :cleanup cleanup
+   :initial-state #(identity initial-state)})
 
-(is (specification-correct? conn-spec
-                            {:gen {:threads 3}
-                             :run {:max-tries 2}}))
-
+ (is (specification-correct? conn-spec
+                            {:gen {:threads 2
+                                   :max-length {:sequential 10
+                                                :parallel 5}}
+                             :run {:max-tries 2
+                                   :num-tests 20}}))
