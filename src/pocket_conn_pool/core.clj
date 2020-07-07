@@ -12,6 +12,8 @@
 (defn get-in-db [key db-fns]
   ((key db-fns)))
 
+;; ============= Correct version ===============
+
 (defn create-connection [db]
   (let [conn (promise)]
     ((dosync
@@ -28,7 +30,7 @@
             (alter waiting conj conn)
             #(deref conn wait-conn-timeout :timeout))))))))
 
-(defn close-connection [conn]
+(defn close-connection [_db conn]
   (let [same-conn? #(= conn (deref %))]
     (when (filter same-conn? conn)
       ((dosync
@@ -42,7 +44,7 @@
             (alter available conj p-conn)
             #(deliver p-conn conn))))))))
 
-;; ============================
+;; ============= Buggy version ===============
 
 (defn create-connection [db]
   (let [conn (promise)]
@@ -62,7 +64,7 @@
            (alter waiting conj conn)
            (deref conn 800 :timeout)))))))
 
-(defn close-connection [conn]
+(defn close-connection [_db conn]
   (dosync
    (if (> (count @waiting) 0)
      (do
